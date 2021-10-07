@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from ocpp.routing import on, after
 from ocpp.v16 import ChargePoint as cp
-from ocpp.v16.enums import Action, RegistrationStatus, AuthorizationStatus, DataTransferStatus, ChargePointStatus
+from ocpp.v16.enums import Action, ClearCacheStatus, RegistrationStatus, AuthorizationStatus, DataTransferStatus, ChargePointStatus
 from ocpp.v16 import call_result, call
 
 class ChargePoint(cp):
@@ -14,13 +14,47 @@ class ChargePoint(cp):
         self.status = ChargePointStatus.available
         self.transaction_id = None
 
-    #triggerd by http server remotely
     async def remote_start_transaction(self, id_tag:str):
         """
         Tell chargepoint to start a transaction with the given id_tag.
         """
+        
+        print("Remote start transaction")
         payload = call.RemoteStartTransactionPayload(id_tag = id_tag )
+        response = await self.call(payload)
+        print(response)
+
+
+    def tmp():
+        msg = [
+            2,
+            "100004ReserveNow1633029999494",
+            "ReserveNow",
+            {
+                "connectorID": 1,
+                "expiryDate": 1633029999509,
+                "idTag": 123,
+                "reservationID": 321,
+                "parentIdTag": 123
+        }
+        ]
+
+    async def remote_reserve_now(self):
+        payload = call.ReserveNowPayload(
+            connectorID=1,
+            expiryDate=1633029999509,
+            idTag=123,
+            reservationID=321,
+            parentIdTag = 123
+        )
         await self.call(payload)
+        response = await self._connection.recv()
+        print(json.loads(response))
+        print(response)
+
+
+
+
 
     @on(Action.Authorize)
     def on_authorize(self, id_tag:str, **kwargs):
@@ -28,8 +62,9 @@ class ChargePoint(cp):
         Verifies a tag and responds with a status
         """
         print("On authorize")
+
         tag_info =  {
-            "status": AuthorizationStatus.accepted
+           "status": AuthorizationStatus.accepted
         }
         print(f"Charger {self.id}: Authorized with {id_tag}")
 
@@ -110,7 +145,7 @@ class ChargePoint(cp):
     #transact own logic here, only used if ocpp does not support the message
     @on(Action.DataTransfer)
     def on_data_transfer(self, vendor_id:str, message_id:str, data:str):
-        print("On data transfer")
+        print(data)
         return call_result.DataTransferPayload(
             status=DataTransferStatus.accepted
         )
