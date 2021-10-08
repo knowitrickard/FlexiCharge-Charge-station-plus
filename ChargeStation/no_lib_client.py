@@ -2,6 +2,7 @@ import asyncio
 from asyncio.events import get_event_loop
 import websockets
 from datetime import datetime
+import time
 import json
 import asyncio
 import concurrent.futures
@@ -21,6 +22,9 @@ class ChargePoint():
     hardcoded_vendor_id = "Flexicharge"
 
     transaction_id = 123
+
+    timestamp_at_last_heartbeat : float = time.perf_counter()
+    time_between_heartbeats = 60 * 60 * 24 #In seconds (heartbeat should be sent once every 24h)
 
 
     def __init__(self, id, connection):
@@ -97,16 +101,22 @@ class ChargePoint():
         await self.my_websocket.send(msg_send)
         response = await self.my_websocket.recv()
         print(json.loads(response))
-        await asyncio.sleep(1)
 
     #Not tested yet, back-end has no implementation for heartbeat at the moment
     async def send_heartbeat(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "Heartbeat", {}]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        print(await self.my_websocket.recv())
-        await asyncio.sleep(1)
+        #print(await self.my_websocket.recv())
+        #await asyncio.sleep(1)
+        self.timestamp_at_last_heartbeat = time.perf_counter()
 
+    async def check_if_time_for_heartbeat(self):
+        seconds_since_last_heartbeat = time.perf_counter() - (self.timestamp_at_last_heartbeat)
+        if seconds_since_last_heartbeat >= self.time_between_heartbeats:
+            return True
+        else:
+            return False
 
     async def send_meter_values(self):
         current_time = datetime.now()
@@ -147,6 +157,11 @@ class ChargePoint():
 
 async def user_input_task(cp):
     while 1:
+        #Maybe not the best solution to generate a periodic heartbeat but using Threads togheter with websocket results in big problems. Time is not enough to solve that now.
+        if await cp.check_if_time_for_heartbeat():
+            await asyncio.gather(cp.send_heartbeat())
+            print("Heartbeat")
+
         a = int(input(">> "))
         if a == 1:
             print("Testing boot notification")
@@ -170,6 +185,7 @@ async def main():
     ) as ws:
         chargePoint = ChargePoint("chargerplus", ws)
         await chargePoint.send_boot_notification()
+        await chargePoint.send_heartbeat()
         #await chargePoint.check_for_message()
         await user_input_task(chargePoint)
 
