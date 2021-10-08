@@ -12,15 +12,26 @@ import threading
 class ChargePoint():
     my_websocket = None
     my_id = ""
+
+    #Define enums for status and error_code (or use the onses in OCPP library)
+    status = "Available"
+    error_code = "NoError"
+
+    hardcoded_connector_id = 1
+    hardcoded_vendor_id = "Flexicharge"
+
+
     def __init__(self, id, connection):
         self.my_websocket = connection
         self.my_id = id
+        """
         _thread = threading.Thread(target=self.between_callback, args=("some text"))
         _thread.start()
-            
+        """ 
 
+    """
     async def some_callback(args):
-        await 
+        return
 
     def between_callback(args):
         loop = asyncio.new_event_loop()
@@ -31,7 +42,7 @@ class ChargePoint():
 
     _thread = threading.Thread(target=between_callback, args=("some text"))
     _thread.start()
-
+    """
 
 
     async def check_for_message(self):
@@ -52,9 +63,9 @@ class ChargePoint():
             "meterSerialNumber": "avt.001.13.1.01" }]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        #response = await self.my_websocket.recv()
-        #print(json.loads(response))
-        #await asyncio.sleep(1)
+        response = await self.my_websocket.recv()
+        print(json.loads(response))
+        await asyncio.sleep(1)
 
     async def send_data_transfer_req(self):
         msg = [1]
@@ -64,8 +75,27 @@ class ChargePoint():
         #print(json.loads(response))
         #await asyncio.sleep(1)
 
+    #Gets no response, is this an error in back-end? Seems to be the case
+    async def send_status_notification(self):
+        current_time = datetime.now()
+        timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
+        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ") #Can be removed if back-end does not want the time-stamp formated
+        
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StatusNotification",{
+            "connectorId" : self.hardcoded_connector_id,
+            "errorCode" : self.error_code,
+            "info" : None, #Optional according to official OCPP-documentation
+            "status" : self.status,
+            "timestamp" : formated_timestamp, #Optional according to official OCPP-documentation
+            "vendorId" : self.hardcoded_vendor_id, #Optional according to official OCPP-documentation
+            "vendorErrorCode" : None #Optional according to official OCPP-documentation
+            }]
 
-
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        response = await self.my_websocket.recv()
+        print(json.loads(response))
+        await asyncio.sleep(1)
 
 async def user_input_task(cp):
     while 1:
@@ -73,6 +103,9 @@ async def user_input_task(cp):
         if a == 1:
             print("Testing boot notification")
             await asyncio.gather(cp.send_boot_notification())
+        if a == 2:
+            print("Testing status notification")
+            await asyncio.gather(cp.send_status_notification())
         elif a == 9:
             await asyncio.sleep(2)
     
@@ -83,7 +116,7 @@ async def main():
     ) as ws:
         chargePoint = ChargePoint("chargerplus", ws)
         await chargePoint.send_boot_notification()
-        await chargePoint.check_for_message()
+        #await chargePoint.check_for_message()
         await user_input_task(chargePoint)
 
 if __name__ == '__main__':
