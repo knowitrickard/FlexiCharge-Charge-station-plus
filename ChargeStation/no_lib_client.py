@@ -19,6 +19,8 @@ class ChargePoint():
 
     transaction_id = 123
 
+    charger_id = 00000
+
     timestamp_at_last_heartbeat : float = time.perf_counter()
     time_between_heartbeats = 60 * 60 * 24 #In seconds (heartbeat should be sent once every 24h)
 
@@ -41,7 +43,12 @@ class ChargePoint():
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
         response = await self.my_websocket.recv()
-        print(json.loads(response))
+        
+         #Save the ID-number we got from back-end
+        response_parsed = json.loads(response)
+        print(response_parsed)
+        self.charger_id = int(response_parsed[3]['chargerId'])
+        print("Charger ID:" + str(self.charger_id))
         await asyncio.sleep(1)
 
     async def send_data_transfer_req(self):
