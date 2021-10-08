@@ -20,6 +20,8 @@ class ChargePoint():
     hardcoded_connector_id = 1
     hardcoded_vendor_id = "Flexicharge"
 
+    transaction_id = 123
+
 
     def __init__(self, id, connection):
         self.my_websocket = connection
@@ -105,18 +107,59 @@ class ChargePoint():
         print(await self.my_websocket.recv())
         await asyncio.sleep(1)
 
+
+    async def send_meter_values(self):
+        current_time = datetime.now()
+        timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
+        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ") #Can be removed if back-end does not want the time-stamp formated
+
+        #Should be replace with "real" sampled values (this is just for testing)
+        sample_value = "12345"
+        sample_context = "Sample.Clock"
+        sample_format = "Raw"
+        sample_measurand = "Energy.Active.Export.Register"
+        sample_phase = "L1"
+        sample_location = "Cable"
+        sample_unit = "kWh"
+
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "MeterValues",{
+                "connectorId" : self.hardcoded_connector_id,
+                "transactionId" : self.transaction_id,
+                "meterValue" : [{
+                    "timestamp": formated_timestamp,
+                    "sampledValue":[
+                        {"value" : sample_value,
+                        "context" : sample_context,
+                        "format" : sample_format,
+                        "measurand": sample_measurand,
+                        "phase": sample_phase,
+                        "location" : sample_location,
+                        "unit": sample_unit},
+                        ]
+                    },],
+        }]
+
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        response = await self.my_websocket.recv()
+        print(json.loads(response))
+        await asyncio.sleep(1)
+
 async def user_input_task(cp):
     while 1:
         a = int(input(">> "))
         if a == 1:
             print("Testing boot notification")
             await asyncio.gather(cp.send_boot_notification())
-        if a == 2:
+        elif a == 2:
             print("Testing status notification")
             await asyncio.gather(cp.send_status_notification())
-        if a == 3:
+        elif a == 3:
             print("Testing status notification")
             await asyncio.gather(cp.send_heartbeat())
+        elif a == 4:
+            print("Testing status notification")
+            await asyncio.gather(cp.send_meter_values())
         elif a == 9:
             await asyncio.sleep(2)
     
