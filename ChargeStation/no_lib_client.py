@@ -5,10 +5,6 @@ from datetime import datetime
 import time
 import json
 import asyncio
-import concurrent.futures
-import sys
-import time
-import threading
 
 class ChargePoint():
     my_websocket = None
@@ -30,31 +26,6 @@ class ChargePoint():
     def __init__(self, id, connection):
         self.my_websocket = connection
         self.my_id = id
-        """
-        _thread = threading.Thread(target=self.between_callback, args=("some text"))
-        _thread.start()
-        """ 
-
-    """
-    async def some_callback(args):
-        return
-
-    def between_callback(args):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        loop.run_until_complete(self.some_callback(args))
-        loop.close()
-
-    _thread = threading.Thread(target=between_callback, args=("some text"))
-    _thread.start()
-    """
-
-
-    async def check_for_message(self):
-        while 1:
-            await self.my_websocket.recv()
-            asyncio.sleep(2)
 
     async def send_boot_notification(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "BootNotification", {
@@ -166,27 +137,20 @@ async def user_input_task(cp):
         if a == 1:
             print("Testing boot notification")
             await asyncio.gather(cp.send_boot_notification())
-        elif a == 2:
-            print("Testing status notification")
-            await asyncio.gather(cp.send_status_notification())
-        elif a == 3:
-            print("Testing status notification")
-            await asyncio.gather(cp.send_heartbeat())
-        elif a == 4:
-            print("Testing status notification")
-            await asyncio.gather(cp.send_meter_values())
         elif a == 9:
             await asyncio.sleep(2)
-    
+
 async def main():
     async with websockets.connect(
         'ws://54.220.194.65:1337/chargerplus',
          subprotocols=['ocpp1.6']
     ) as ws:
         chargePoint = ChargePoint("chargerplus", ws)
+
         await chargePoint.send_boot_notification()
         await chargePoint.send_heartbeat()
         #await chargePoint.check_for_message()
+        
         await user_input_task(chargePoint)
 
 if __name__ == '__main__':
