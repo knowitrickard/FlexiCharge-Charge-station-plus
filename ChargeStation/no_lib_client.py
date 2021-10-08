@@ -97,6 +97,14 @@ class ChargePoint():
         print(json.loads(response))
         await asyncio.sleep(1)
 
+    #Not tested yet, back-end has no implementation for heartbeat at the moment
+    async def send_heartbeat(self):
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "Heartbeat", {}]
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        print(await self.my_websocket.recv())
+        await asyncio.sleep(1)
+
 async def user_input_task(cp):
     while 1:
         a = int(input(">> "))
@@ -106,6 +114,9 @@ async def user_input_task(cp):
         if a == 2:
             print("Testing status notification")
             await asyncio.gather(cp.send_status_notification())
+        if a == 3:
+            print("Testing status notification")
+            await asyncio.gather(cp.send_heartbeat())
         elif a == 9:
             await asyncio.sleep(2)
     
