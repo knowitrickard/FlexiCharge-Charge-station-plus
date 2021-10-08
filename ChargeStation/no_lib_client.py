@@ -137,6 +137,15 @@ async def user_input_task(cp):
         if a == 1:
             print("Testing boot notification")
             await asyncio.gather(cp.send_boot_notification())
+        elif a == 2:
+            print("Testing status notification")
+            await asyncio.gather(cp.send_status_notification())
+        elif a == 3:
+            print("Testing status notification")
+            await asyncio.gather(cp.send_heartbeat())
+        elif a == 4:
+            print("Testing status notification")
+            await asyncio.gather(cp.send_meter_values())
         elif a == 9:
             await asyncio.sleep(2)
 
