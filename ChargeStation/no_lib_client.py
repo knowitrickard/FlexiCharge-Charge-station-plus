@@ -23,11 +23,13 @@ class ChargePoint():
 
     transaction_id = 123
 
+    #Wont't be used in the final product. It is here until back-end is done with thier implementation (then we know what to send instead)
+    id_tag = 123456
+
     charger_id = 00000
 
     timestamp_at_last_heartbeat : float = time.perf_counter()
     time_between_heartbeats = 60 * 60 * 24 #In seconds (heartbeat should be sent once every 24h)
-
 
     def __init__(self, id, connection):
         self.my_websocket = connection
@@ -102,7 +104,15 @@ class ChargePoint():
         await self.my_websocket.send(msg_send)
         await asyncio.sleep(1)
 
-    #Gets no response, is this an error in back-end? Seems to be the case
+    async def send_data_transfer_req(self):
+        msg = [1]
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        #response = await self.my_websocket.recv()
+        #print(json.loads(response))
+        #await asyncio.sleep(1)
+
+    #Gets no response, is this an error in back-end? Seems to be the case (Update: No response seems to be expected)
     async def send_status_notification(self):
         current_time = datetime.now()
         timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
@@ -120,10 +130,11 @@ class ChargePoint():
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
+        #No response expected
+        #response = await self.my_websocket.recv()
+        #print(json.loads(response))
 
-    #Not tested yet, back-end has no implementation for heartbeat at the moment
+    #Depricated in backend
     async def send_heartbeat(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "Heartbeat", {}]
         msg_send = json.dumps(msg)
@@ -139,6 +150,7 @@ class ChargePoint():
         else:
             return False
 
+    #Depricated in back-end
     async def send_meter_values(self):
         current_time = datetime.now()
         timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
@@ -176,10 +188,57 @@ class ChargePoint():
         print(json.loads(response))
         await asyncio.sleep(1)
 
+    #This is a test function to initiate communication from server side
     async def send_data_transfer_req(self):
         msg = ["chargerplus", "ReserveNow"]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
+
+    #Will need changes when back-end is done!
+    async def stop_transaction(self):
+        meter_stop = 123
+        reason = "Remote"
+
+        current_time = datetime.now()
+        timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
+        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ") #Can be removed if back-end does not want the time-stamp formated
+        
+        #Back-end won't use samapled values, instead (I beleave) that they only want the charged level
+        sample_value = "12345"
+        sample_context = "Sample.Clock"
+        sample_format = "Raw"
+        sample_measurand = "Energy.Active.Export.Register"
+        sample_phase = "L1"
+        sample_location = "Cable"
+        sample_unit = "kWh"
+
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction",{
+                "idTag" : self.id_tag,
+                "meterStop" : meter_stop,
+                "timestamp" : formated_timestamp,
+                "transactionId" : self.transaction_id,
+                "reason" : reason,
+                "transactionData" : [{
+                    "timestamp": formated_timestamp,
+                    "sampledValue":[
+                        {"value" : sample_value,
+                        "context" : sample_context,
+                        "format" : sample_format,
+                        "measurand": sample_measurand,
+                        "phase": sample_phase,
+                        "location" : sample_location,
+                        "unit": sample_unit},
+                        ]
+                    },],
+        }]
+
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        response = await self.my_websocket.recv()
+        response_parsed = json.loads(response)
+        stop_status = response_parsed[3]['status']
+        print("Stap status: " + stop_status)
+        await asyncio.sleep(1)
 
 async def user_input_task(cp):
     while 1:
@@ -191,6 +250,7 @@ async def user_input_task(cp):
             print("Heartbeat")
 
         a = int(input(">> "))
+
         if a == 1:
             print("Testing boot notification")
             await asyncio.gather(cp.send_boot_notification())
