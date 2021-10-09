@@ -1,14 +1,18 @@
 import asyncio
 from asyncio.events import get_event_loop
+import threading
 import websockets
 from datetime import datetime
 import time
 import json
 import asyncio
+from threading import Thread
 
 class ChargePoint():
     my_websocket = None
     my_id = ""
+
+    reserve_now_timer = 0
 
     #Define enums for status and error_code (or use the onses in OCPP library)
     status = "Available"
@@ -29,6 +33,60 @@ class ChargePoint():
         self.my_websocket = connection
         self.my_id = id
 
+    async def get_message(self):
+        print("Check messages")
+        try:
+            msg = await asyncio.wait_for(self.my_websocket.recv(), 1)
+            #async for msg in self.my_websocket: #Takes latest message
+            print("Check for message")
+            message = json.loads(msg)
+            print(message)
+
+            if message[2] == "ReserveNow":
+                await asyncio.gather(self.reserve_now(message))
+            elif message[2] == "BootNotification":
+                self.charger_id = message[3]["chargerId"] #This is the id number we get from the server (100001)
+                print(self.charger_id)
+            elif message[2] == "RemoteStart":
+                await asyncio.gather(self.remote_start_transaction(message[1]))
+        except:
+            pass
+
+
+    async def remote_start_transaction(self, unique_message_id):
+        msg = [3, 
+            unique_message_id, 
+            "RemoteStartTransaction", 
+            {"status": "Accepted"}
+        ]
+        response = json.dumps(msg)
+        await self.my_websocket.send(response)
+
+    #Will count down every second
+    def timer_countdown_reservation(self):
+        if self.reserve_now_timer <= 0:
+            print("Reservation is up!")
+            return
+        self.reserve_now_timer = self.reserve_now_timer - 1
+        print(self.reserve_now_timer)
+        threading.Timer(1, self.timer_countdown_reservation).start()
+
+
+    async def reserve_now(self, message):
+        timestamp = message[3]["expiryDate"]   #Given in ms since epoch
+        reserved_for_ms = int(timestamp - (int(time.time()*1000)))
+        self.reserve_now_timer = int(reserved_for_ms/100)   #This should be changed to seconds. Time received is too short to test
+
+        threading.Timer(1, self.timer_countdown_reservation).start()
+
+        msg = [3, 
+            message[1], #Have to use the unique message id received from server
+            "ReserveNow", 
+            {"status": "Accepted"}
+        ]
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+
     async def send_boot_notification(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "BootNotification", {
             "chargePointVendor": "AVT-Company",
@@ -42,22 +100,7 @@ class ChargePoint():
             "meterSerialNumber": "avt.001.13.1.01" }]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        response = await self.my_websocket.recv()
-        
-         #Save the ID-number we got from back-end
-        response_parsed = json.loads(response)
-        print(response_parsed)
-        self.charger_id = int(response_parsed[3]['chargerId'])
-        print("Charger ID:" + str(self.charger_id))
         await asyncio.sleep(1)
-
-    async def send_data_transfer_req(self):
-        msg = [1]
-        msg_send = json.dumps(msg)
-        await self.my_websocket.send(msg_send)
-        #response = await self.my_websocket.recv()
-        #print(json.loads(response))
-        #await asyncio.sleep(1)
 
     #Gets no response, is this an error in back-end? Seems to be the case
     async def send_status_notification(self):
@@ -133,8 +176,15 @@ class ChargePoint():
         print(json.loads(response))
         await asyncio.sleep(1)
 
+    async def send_data_transfer_req(self):
+        msg = ["chargerplus", "ReserveNow"]
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+
 async def user_input_task(cp):
     while 1:
+        msg = await asyncio.gather(cp.get_message())    #Check if there is any incoming message pending
+
         #Maybe not the best solution to generate a periodic heartbeat but using Threads togheter with websocket results in big problems. Time is not enough to solve that now.
         if await cp.check_if_time_for_heartbeat():
             await asyncio.gather(cp.send_heartbeat())
@@ -153,8 +203,11 @@ async def user_input_task(cp):
         elif a == 4:
             print("Testing status notification")
             await asyncio.gather(cp.send_meter_values())
+        elif a == 5:
+            print("Testing reserve now")
+            await asyncio.gather(cp.send_data_transfer_req())
         elif a == 9:
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.1)
 
 async def main():
     async with websockets.connect(
@@ -164,8 +217,7 @@ async def main():
         chargePoint = ChargePoint("chargerplus", ws)
 
         await chargePoint.send_boot_notification()
-        await chargePoint.send_heartbeat()
-        #await chargePoint.check_for_message()
+        #await chargePoint.send_heartbeat()
         
         await user_input_task(chargePoint)
 
