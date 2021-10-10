@@ -200,8 +200,25 @@ class ChargePoint():
 
 
 
+    async  def start_transaction(self):
+        current_time = datetime.now()
+        timestamp = current_time.timestamp()
+        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
+            "connectorId" : 2,
+            "id_tag": 123456 ,
+            "meterStart":1,
+            "timestamp" : formated_timestamp,
+            "reservationId": 1,
 
 
+
+        }]
+        
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        response = await self.my_websocket.recv()
+        print(json.loads(response))
 
 
 
@@ -400,6 +417,9 @@ async def user_input_task(cp):
         elif a == 9:
             print("Reset reservation")
             cp.hard_reset_reservation()
+        elif a == 10:
+            print("Testing start transaction")
+            await asyncio.gather(cp.start_transaction())
         elif a == 0:
             await asyncio.sleep(0.1)
 
