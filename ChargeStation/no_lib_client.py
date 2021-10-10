@@ -1,3 +1,5 @@
+#Note! A message starting with the number 2 means we (chargpoint) are starting a communication. The number 3 means we are responding.
+
 import asyncio
 from asyncio.events import get_event_loop
 import threading
@@ -22,6 +24,9 @@ class ChargePoint():
 
     #Transaction related variables
     is_charging = False
+    charging_id_tag = None
+    charging_connector = None
+    charging_transaction_id = None
 
     #Define enums for status and error_code (or use the onses in OCPP library)
     status = "Available"
@@ -48,7 +53,7 @@ class ChargePoint():
             #async for msg in self.my_websocket: #Takes latest message
             print("Check for message")
             message = json.loads(msg)
-            #print(message)
+            print(message)
 
             if message[2] == "ReserveNow":
                 await asyncio.gather(self.reserve_now(message))
@@ -57,17 +62,23 @@ class ChargePoint():
                 print(self.charger_id)
             elif message[2] == "RemoteStartTransaction":
                 await asyncio.gather(self.remote_start_transaction(message))
+            elif message[2] == "RemoteStopTransaction":
+                await asyncio.gather(self.remote_stop_transaction(message))
         except:
             pass
 
     #AuthorizeRemoteTxRequests is always false since no authorize function exists in backend(?)
     #TODO - Change when multiple connectors exists. Add parent id tag.
     #       No handling for connectorID = 0 since only a single connector will exist in mvp
+    #       No status_notification is sent since it does not get a response and locks the program
     async def remote_start_transaction(self, message):
         if int(message[3]["idTag"]) == self.reservation_id_tag: #If the idTag has a reservation
             is_charging = True
             print("Remote transaction started")
-            self.reset_reservation()
+            self.charging_id_tag = self.reservation_id_tag
+            self.charging_connector = self.reserved_connector
+            self.hard_reset_reservation()
+
             msg = [3, 
                 message[1], #Unique message id
                 "RemoteStartTransaction", 
@@ -75,6 +86,9 @@ class ChargePoint():
             ]
             response = json.dumps(msg)
             await self.my_websocket.send(response)
+
+            #await self.send_status_notification()   #Notify central system that connector is now available
+
         else:   #A non reserved tag tries to use the connector
             print("This tag does not have a reservation")
             msg = [3, 
@@ -85,21 +99,53 @@ class ChargePoint():
             response = json.dumps(msg)
             await self.my_websocket.send(response)
 
+
+
+
+
+    #TODO - Implement start transaction to get the transaction_id. Otherwise this function cannot be properly implemented
+    async def remote_stop_transaction(self, message):
+        if self.is_charging == True and int(message[3]["transactionID"]) == int(self.charging_transaction_id):
+            print("Remote stop charging")
+            self.hard_reset_charging()
+
+            msg = [3, 
+                message[1], #Have to use the unique message id received from server
+                "RemoteStopTransaction", 
+                {"status": "Accepted"}
+            ]
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+        else:
+            print("Charging cannot be stopped")
+            msg = [3, 
+                message[1], #Have to use the unique message id received from server
+                "RemoteStopTransaction", 
+                {"status": "Rejected"}
+            ]
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+
     #Will count down every second
     def timer_countdown_reservation(self):
         if self.reserve_now_timer <= 0:
             print("Reservation is canceled!")
-            self.reset_reservation()
+            self.hard_reset_reservation()
             return
         self.reserve_now_timer = self.reserve_now_timer - 1
         print(self.reserve_now_timer)
         threading.Timer(1, self.timer_countdown_reservation).start()    #Countdown every second
     
-    def reset_reservation(self):
+    def hard_reset_reservation(self):
         self.is_reserved = False
         self.reserve_now_timer = 0
         self.reservation_id_tag = None
         self.reservation_id = None
+
+    def hard_reset_charging(self):
+        self.charging_id_tag = None
+        self.charging_connector = None
+        self.is_charging = False
 
 
     async def reserve_now(self, message):
@@ -114,8 +160,7 @@ class ChargePoint():
                 msg_send = json.dumps(msg)
                 await self.my_websocket.send(msg_send)
                 return
-                
-            self.reset_reservation()
+            self.hard_reset_reservation()
             self.is_reserved = True
             self.reservation_id_tag = message[3]["idTag"]
             self.reservation_id = message[3]["reservationID"]
@@ -175,15 +220,16 @@ class ChargePoint():
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StatusNotification",{
             "connectorId" : self.hardcoded_connector_id,
             "errorCode" : self.error_code,
-            "info" : None, #Optional according to official OCPP-documentation
+            "info" : "None", #Optional according to official OCPP-documentation
             "status" : self.status,
             "timestamp" : formated_timestamp, #Optional according to official OCPP-documentation
             "vendorId" : self.hardcoded_vendor_id, #Optional according to official OCPP-documentation
-            "vendorErrorCode" : None #Optional according to official OCPP-documentation
+            "vendorErrorCode" : "None" #Optional according to official OCPP-documentation
             }]
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
+        print("Status notification sent")
         response = await self.my_websocket.recv()
         print(json.loads(response))
 
@@ -254,8 +300,14 @@ class ChargePoint():
         msg = ["chargerplus", "ReserveNow"]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
+
     async def send_data_remote_start(self):
         msg = ["chargerplus", "RemoteStart"]
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+
+    async def send_data_remote_stop(self):
+        msg = ["chargerplus", "RemoteStop"]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
 
@@ -290,7 +342,7 @@ async def user_input_task(cp):
             await asyncio.gather(cp.send_heartbeat())
         elif a == 4:
             print("Testing status notification")
-            await asyncio.gather(cp.send_meter_values())
+            await asyncio.gather(cp.send_status_notification())
         elif a == 5:
             print("Testing reserve now")
             await asyncio.gather(cp.send_data_reserve())
@@ -298,8 +350,11 @@ async def user_input_task(cp):
             print("Testing remote start")
             await asyncio.gather(cp.send_data_remote_start())
         elif a == 7:
+            print("Testing remote stop")
+            await asyncio.gather(cp.send_data_remote_stop())
+        elif a == 8:
             print("Reset reservation")
-            cp.reset_reservation()
+            cp.hard_reset_reservation()
         elif a == 9:
             await asyncio.sleep(0.1)
 
