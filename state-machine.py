@@ -6,6 +6,7 @@ from StateHandler import States
 from StateHandler import StateHandler
 from images import displayStatus
 
+import  qrcode
 state = StateHandler()
 
 def GUI():
@@ -28,6 +29,11 @@ def GUI():
                                         sg.Text("%", font=('ITC Avant Garde Std Md', 55), key='PERCENTMARK', text_color='Yellow')
                                     ]
                                 ]
+    qrCodeLayout =  [
+                            [
+                                sg.Image(data=displayStatus.qrCode(), key='QRCODE', size=(285,285)) 
+                            ]
+                        ]
 
     chargingPowerLayout =   [
                                 [  
@@ -49,6 +55,10 @@ def GUI():
     background_Window = sg.Window(title="FlexiCharge", layout=startingUpLayout, no_titlebar=True, location=(0,0), size=(480, 800), keep_on_top=False).Finalize()
     background_Window.TKroot["cursor"] = "none"
 
+    qrCode_window = sg.Window(title="FlexiChargeQrWindow", layout=qrCodeLayout, location=(95, 165), grab_anywhere=False, no_titlebar=True, size=(285,285), background_color='white', margins=(0,0)).finalize()
+    qrCode_window.TKroot["cursor"] = "none"
+    qrCode_window.hide()
+
     chargingPercent_window = sg.Window(title="FlexiChargeChargingPercentWindow", layout=chargingPercentLayout, location=(140, 245), grab_anywhere=False, no_titlebar=True, background_color='black', margins=(0,0)).finalize()
     chargingPercent_window.TKroot["cursor"] = "none"
     chargingPercent_window.hide()
@@ -69,30 +79,31 @@ def GUI():
     chargingPrice_window.TKroot["cursor"] = "none"
     chargingPrice_window.hide()
 
-    return background_Window, chargingPercent_window, chargingPercentMark_window, chargingTime_window, chargingPower_window, chargingPrice_window
+    return background_Window, chargingPercent_window, chargingPercentMark_window, chargingTime_window, chargingPower_window, chargingPrice_window, qrCode_window
 
-window_back, window_chargingPercent, window_chargingPercentMark, window_chargingPower, window_chargingTime, window_chargingPrice = GUI()
+window_back, window_chargingPercent, window_chargingPercentMark, window_chargingPower, window_chargingTime, window_chargingPrice, window_qrCode = GUI()
 
 #update all the windows
 def refreshWindows():
-    global window_back, window_chargingPower, window_chargingTime, window_chargingPercent, window_chargingPrice
+    global window_back, window_chargingPower, window_chargingTime, window_chargingPercent, window_chargingPrice, window_qrCode
     window_back.refresh()
     window_chargingPower.refresh()
     window_chargingTime.refresh()
     window_chargingPercent.refresh()
     window_chargingPercentMark.refresh()
     window_chargingPrice.refresh()
+    window_qrCode.refresh()
 
 async def statemachine():
 
-    global window_back
+    global window_back, window_qrCode
 
     #instead of chargerID = 128321 you have to write the follwoing two rows(your ocpp code) to get 
     #the charge id from back-end and display it on screen
 
     #response = await ocpp_client.send_boot_notification()
     #chargerID = response.charger_id
-    chargerID = 128321
+    chargerID = 111111
     
     firstNumberOfChargerID = int(chargerID % 10) 
     secondNumberOfChargerID = int(chargerID/10) % 10 
@@ -123,8 +134,29 @@ async def statemachine():
             time.sleep(1)
 
         elif state.get_state() == States.S_AVAILABLE:
-            #Display QR code image
-            window_back['IMAGE'].update(data=displayStatus.qrCode())
+
+            #Display QR code
+            qr = qrcode.QRCode(
+                version=8,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=5,
+                border=4,
+            )
+            qr.add_data(chargerID)
+            qr.make(fit=True)
+            img_qrCodeGenerated = qr.make_image(fill_color="black", back_color="white")
+            type(img_qrCodeGenerated)
+            img_qrCodeGenerated.save("charger_images/qrCode.png")
+
+            #Display Charing id
+            window_back['IMAGE'].update(data=displayStatus.chargingID())
+            
+            #Show QR code image on screen
+            window_qrCode.UnHide()
+            #Show Charger id on screen with QR code image
+            chargerID_window.UnHide()
+            #update the window
+            refreshWindows()
             #Show Charger id on screen with QR code image
             chargerID_window.UnHide()
             #update the window
@@ -136,6 +168,7 @@ async def statemachine():
 
         elif state.get_state() == States.S_PLUGINCABLE:
 
+            window_qrCode.hide()
             window_back['IMAGE'].update(data=displayStatus.plugCable())
             #Hide the charge id on this state
             chargerID_window.Hide()
@@ -144,13 +177,13 @@ async def statemachine():
             time.sleep(2)
 
         elif state.get_state() == States.S_CONNECTING:
-
+            window_qrCode.hide()
             window_back['IMAGE'].update(data=displayStatus.connectingToCar())
             state.set_state(States.S_CHARGING)
             time.sleep(2)
 
         elif state.get_state() == States.S_CHARGING:
-
+            window_qrCode.hide()
             window_back['IMAGE'].update(data=displayStatus.charging())
 
             #Display all the windows below during charging image shown on screen
@@ -183,6 +216,7 @@ async def statemachine():
         elif state.get_state() == States.S_BATTERYFULL:
 
             #hide all the windows below during barttery full image shown on screen
+            window_qrCode.hide()
             window_chargingPercent.hide()
             window_chargingPercentMark.hide()
             window_chargingTime.hide()
@@ -193,19 +227,7 @@ async def statemachine():
             refreshWindows()
             state.set_state(States.S_BATTERYFULL)
             time.sleep(1)
-
-        """ 
-        elif state.get_state() == States.S_BATTERYFULL:
-            state.set_state(States.S_DISCONNECT)
-            window['IMAGE'].update(data=displayStatus.disconnectingFromCar())
-            window.refresh()
-            time.sleep(2)
-             
-        else:
-            window['IMAGE'].update(data=displayStatus.qrCode())
-            window.refresh()
-            time.sleep(2) """
-
+#RFID
 """def RFID():
     reader = SimpleMFRC522()
     try:

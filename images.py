@@ -13,8 +13,8 @@ class displayStatus:
     def chargeNotAvailable():
         img_chargeNotAvailable = get_img_data('charger_images/chargeNotAvailable.png')
         return img_chargeNotAvailable
-    def qrCode():
-        img_qrCode = get_img_data('charger_images/qrCode.png')
+    def chargingID():
+        img_qrCode = get_img_data('charger_images/chargingID.png')
         return img_qrCode
     def authorizing():
         img_authorizing = get_img_data('charger_images/AuthorizingTag.png')
@@ -52,4 +52,7 @@ class displayStatus:
     def unableToCharge():
         img_unableToCharge = get_img_data('charger_images/unableToCharge.png')
         return img_unableToCharge
+    def qrCode():
+        img_qrCode = get_img_data('charger_images/qrCode.png')
+        return img_qrCode
     
