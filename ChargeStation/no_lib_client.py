@@ -18,6 +18,7 @@ class ChargePoint():
     reservation_id_tag = None
     reservation_id = None
     reserved_connector = None
+    ReserveConnectorZeroSupported = True
 
     #Transaction related variables
     is_charging = False
@@ -61,10 +62,12 @@ class ChargePoint():
 
     #AuthorizeRemoteTxRequests is always false since no authorize function exists in backend(?)
     #TODO - Change when multiple connectors exists. Add parent id tag.
+    #       No handling for connectorID = 0 since only a single connector will exist in mvp
     async def remote_start_transaction(self, message):
         if int(message[3]["idTag"]) == self.reservation_id_tag: #If the idTag has a reservation
             is_charging = True
             print("Remote transaction started")
+            self.reset_reservation()
             msg = [3, 
                 message[1], #Unique message id
                 "RemoteStartTransaction", 
@@ -85,7 +88,7 @@ class ChargePoint():
     #Will count down every second
     def timer_countdown_reservation(self):
         if self.reserve_now_timer <= 0:
-            print("Reservation is up!")
+            print("Reservation is canceled!")
             self.reset_reservation()
             return
         self.reserve_now_timer = self.reserve_now_timer - 1
@@ -101,6 +104,17 @@ class ChargePoint():
 
     async def reserve_now(self, message):
         if self.reservation_id == None or self.reservation_id == message[3]["reservationID"]:
+            if self.ReserveConnectorZeroSupported == False and message[3]["connectorID"] == 0:
+                print("Connector zero not allowed")
+                msg = [3, 
+                    message[1], #Have to use the unique message id received from server
+                    "ReserveNow", 
+                    {"status": "Rejected"}
+                ]
+                msg_send = json.dumps(msg)
+                await self.my_websocket.send(msg_send)
+                return
+                
             self.reset_reservation()
             self.is_reserved = True
             self.reservation_id_tag = message[3]["idTag"]
