@@ -27,6 +27,7 @@ class ChargePoint():
     charging_id_tag = None
     charging_connector = None
     charging_transaction_id = None
+    charging_Wh = 0 #I think this is how many Wh have been used to charge
 
     #Define enums for status and error_code (or use the onses in OCPP library)
     status = "Available"
@@ -196,6 +197,48 @@ class ChargePoint():
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
 
+
+
+
+
+
+
+
+
+
+    #TODO - Replace the parameter transactionId with the transactionId provided by start_transaction
+    async def stop_transaction(self):
+        current_time = datetime.now()
+        timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
+        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction", {
+            "idTag": self.charging_id_tag,
+            "meterStop": self.charging_Wh,
+            "timestamp": formated_timestamp,
+            "transactionId": 1, #IMPORTANT! This should be the transactionId received from start_transaction
+            "reason": "Local",
+            "transactionData": None#[
+                #{
+                #Can place timestamp here. (Optional)
+                #},
+                #Can place meterValues here. (Optional)
+            #]
+            }]
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
+        response = await self.my_websocket.recv()
+        print(json.loads(response))
+
+
+
+
+
+
+
+
+
+
+
     async def send_boot_notification(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "BootNotification", {
             "chargePointVendor": "AVT-Company",
@@ -209,7 +252,6 @@ class ChargePoint():
             "meterSerialNumber": "avt.001.13.1.01" }]
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        await asyncio.sleep(1)
 
     #Gets no response, is this an error in back-end? Seems to be the case
     async def send_status_notification(self):
@@ -353,9 +395,12 @@ async def user_input_task(cp):
             print("Testing remote stop")
             await asyncio.gather(cp.send_data_remote_stop())
         elif a == 8:
+            print("Testing remote stop")
+            await asyncio.gather(cp.stop_transaction())
+        elif a == 9:
             print("Reset reservation")
             cp.hard_reset_reservation()
-        elif a == 9:
+        elif a == 0:
             await asyncio.sleep(0.1)
 
 async def main():
