@@ -28,6 +28,7 @@ class ChargePoint():
     charging_connector = None
     charging_transaction_id = None
     charging_Wh = 0 #I think this is how many Wh have been used to charge
+    charging_transaction_id = None
 
     #Define enums for status and error_code (or use the onses in OCPP library)
     status = "Available"
@@ -35,6 +36,9 @@ class ChargePoint():
 
     hardcoded_connector_id = 1
     hardcoded_vendor_id = "com.flexicharge"
+
+    hardcoded_id_tag = 1
+
 
     transaction_id = 123
 
@@ -75,7 +79,7 @@ class ChargePoint():
     #       No status_notification is sent since it does not get a response and locks the program
     async def remote_start_transaction(self, message):
         if int(message[3]["idTag"]) == self.reservation_id_tag: #If the idTag has a reservation
-            is_charging = True
+            self.is_charging = True
             print("Remote transaction started")
             self.charging_id_tag = self.reservation_id_tag
             self.charging_connector = self.reserved_connector
@@ -89,7 +93,7 @@ class ChargePoint():
             response = json.dumps(msg)
             await self.my_websocket.send(response)
 
-            #await self.send_status_notification()   #Notify central system that connector is now available
+            await self.send_status_notification()   #Notify central system that connector is now available
 
         else:   #A non reserved tag tries to use the connector
             print("This tag does not have a reservation")
@@ -101,16 +105,9 @@ class ChargePoint():
             response = json.dumps(msg)
             await self.my_websocket.send(response)
 
-
-
-
-
-    #TODO - Implement start transaction to get the transaction_id. Otherwise this function cannot be properly implemented
     async def remote_stop_transaction(self, message):
         if self.is_charging == True and int(message[3]["transactionID"]) == int(self.charging_transaction_id):
             print("Remote stop charging")
-            self.hard_reset_charging()
-
             msg = [3, 
                 message[1], #Have to use the unique message id received from server
                 "RemoteStopTransaction", 
@@ -118,6 +115,7 @@ class ChargePoint():
             ]
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
+            await self.stop_transaction(is_remote=True) #Stop transaction and inform server
         else:
             print("Charging cannot be stopped")
             msg = [3, 
@@ -145,9 +143,11 @@ class ChargePoint():
         self.reservation_id = None
 
     def hard_reset_charging(self):
+        self.is_charging = False
         self.charging_id_tag = None
         self.charging_connector = None
         self.is_charging = False
+        print("Hard reset charging")
 
 
     async def reserve_now(self, message):
@@ -200,7 +200,7 @@ class ChargePoint():
 
 
 
-
+    #Tells server we have started a transaction (charging)
     async  def start_transaction(self):
         current_time = datetime.now()
         timestamp = current_time.timestamp()
@@ -224,26 +224,45 @@ class ChargePoint():
 
 
 
-    #TODO - Replace the parameter transactionId with the transactionId provided by start_transaction
-    async def stop_transaction(self):
+    #TODO - Adjust to multiple connectors when added. Assumes a single connector
+    async def stop_transaction(self, is_remote):
         current_time = datetime.now()
-        timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
-        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction", {
-            "idTag": self.charging_id_tag,
-            "meterStop": self.charging_Wh,
-            "timestamp": formated_timestamp,
-            "transactionId": 1, #IMPORTANT! This should be the transactionId received from start_transaction
-            "reason": "Local",
-            "transactionData": None#[
-                #{
-                #Can place timestamp here. (Optional)
-                #},
-                #Can place meterValues here. (Optional)
-            #]
-            }]
-        msg_send = json.dumps(msg)
-        await self.my_websocket.send(msg_send)
+        timestamp = current_time.timestamp()
+        if is_remote == True:
+            msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction", {
+                "idTag": self.charging_id_tag,
+                "meterStop": self.charging_Wh,
+                "timestamp": timestamp,
+                "transactionId": self.charging_transaction_id,
+                "reason": "Remote",
+                "transactionData": None#[
+                    #{
+                    #Can place timestamp here. (Optional)
+                    #},
+                    #Can place meterValues here. (Optional)
+                #]
+                }]
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+            self.hard_reset_charging()
+        else:
+            msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction", {
+                "idTag": self.charging_id_tag,
+                "meterStop": self.charging_Wh,
+                "timestamp": timestamp,
+                "transactionId": self.charging_transaction_id,
+                "reason": "Remote",
+                "transactionData": None#[
+                    #{
+                    #Can place timestamp here. (Optional)
+                    #},
+                    #Can place meterValues here. (Optional)
+                #]
+                }]
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+            self.hard_reset_charging()
+
         response = await self.my_websocket.recv()
         print(json.loads(response))
 
@@ -445,8 +464,8 @@ async def user_input_task(cp):
             print("Testing remote stop")
             await asyncio.gather(cp.send_data_remote_stop())
         elif a == 8:
-            print("Testing remote stop")
-            await asyncio.gather(cp.stop_transaction())
+            print("Testing stop transaction")
+            await asyncio.gather(cp.stop_transaction(False))
         elif a == 9:
             print("Reset reservation")
             cp.hard_reset_reservation()
