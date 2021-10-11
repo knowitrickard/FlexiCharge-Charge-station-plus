@@ -34,7 +34,7 @@ class ChargePoint():
     error_code = "NoError"
 
     hardcoded_connector_id = 1
-    hardcoded_vendor_id = "Flexicharge"
+    hardcoded_vendor_id = "com.flexicharge"
 
     transaction_id = 123
 
@@ -59,12 +59,13 @@ class ChargePoint():
             if message[2] == "ReserveNow":
                 await asyncio.gather(self.reserve_now(message))
             elif message[2] == "BootNotification":
-                self.charger_id = message[3]["chargerId"] #This is the id number we get from the server (100001)
-                print(self.charger_id)
+                return #Should change state here!
             elif message[2] == "RemoteStartTransaction":
                 await asyncio.gather(self.remote_start_transaction(message))
             elif message[2] == "RemoteStopTransaction":
                 await asyncio.gather(self.remote_stop_transaction(message))
+            elif message[2] == "DataTransfer":
+                await asyncio.gather(self.recive_data_transfer(message))
         except:
             pass
 
@@ -345,9 +346,40 @@ class ChargePoint():
         print(json.loads(response))
         await asyncio.sleep(1)
 
+    async def send_data_transfer(self, message_id, message_data):
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "DataTransfer",{
+                "vendorId" : self.hardcoded_vendor_id,
+                "messageId" : message_id,
+                "data" : message_data
+        }]
 
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
 
+    async def recive_data_transfer(self, message):
+        status = "Rejected"
+        if message[3]["vendorId"] == self.hardcoded_vendor_id:
+            if message[3]["messageId"] == "BootData":
+                parsed_data = json.loads(message[3]["data"])
+                self.charger_id = parsed_data["chargerId"]
+                print("Charger ID is set to: " + str(self.charger_id))
+                status = "Accepted"
+            else:
+                status = "UnknownMessageId"
+        else:
+            status = "UnknownVenorId"
 
+        #Send a conf
+        """
+        conf_msg = [3, 
+                    message[1],
+                    "DataTransfer", 
+                    {"status": status}]
+
+        conf_send = json.dumps(conf_msg)
+        print("Sending confirmation: " + conf_send)
+        await self.my_websocket.send(conf_send)
+        """
 
 
 
@@ -384,6 +416,7 @@ async def user_input_task(cp):
     while 1:
         msg = await asyncio.gather(cp.get_message())    #Check if there is any incoming message pending
 
+        """
         #Maybe not the best solution to generate a periodic heartbeat but using Threads togheter with websocket results in big problems. Time is not enough to solve that now.
         if await cp.check_if_time_for_heartbeat():
             await asyncio.gather(cp.send_heartbeat())
@@ -422,6 +455,7 @@ async def user_input_task(cp):
             await asyncio.gather(cp.start_transaction())
         elif a == 0:
             await asyncio.sleep(0.1)
+        """
 
 async def main():
     async with websockets.connect(
