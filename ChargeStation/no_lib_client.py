@@ -28,7 +28,6 @@ class ChargePoint():
     charging_connector = None
     charging_transaction_id = None
     charging_Wh = 0 #I think this is how many Wh have been used to charge
-    charging_transaction_id = None
 
     #Define enums for status and error_code (or use the onses in OCPP library)
     status = "Available"
@@ -89,9 +88,9 @@ class ChargePoint():
             ]
             response = json.dumps(msg)
             await self.my_websocket.send(response)
-
+            await self.start_transaction()
             await self.send_status_notification()   #Notify central system that connector is now available
-
+            print("Charge should be started")
         else:   #A non reserved tag tries to use the connector
             print("This tag does not have a reservation")
             msg = [3, 
