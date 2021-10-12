@@ -16,6 +16,7 @@ class ChargePoint():
     my_id = ""
 
     meter_value_total = 0   #Send this to server at start and stop. It will calculate cost. Incremented during charging.
+    current_charging_percentage = 0
 
     #Reservation related variables
     reserve_now_timer = 0
@@ -52,29 +53,32 @@ class ChargePoint():
         self.my_id = id
 
     async def get_message(self):
-        try:
-            msg = await asyncio.wait_for(self.my_websocket.recv(), 1)
-            #async for msg in self.my_websocket: #Takes latest message
-            print("Check for message")
-            message = json.loads(msg)
-            print(message)
+        c = 0
+        while c < 3:
+            c = c + 1
+            try:
+                msg = await asyncio.wait_for(self.my_websocket.recv(), 1)
+                #async for msg in self.my_websocket: #Takes latest message
+                print("Check for message")
+                message = json.loads(msg)
+                print(message)
 
-            if message[2] == "ReserveNow":
-                await asyncio.gather(self.reserve_now(message))
-            elif message[2] == "BootNotification":
-                self.status = "Available"
-                await asyncio.gather(self.send_status_notification(None)) #Status notification should be sent after a boot
-                #Should change state here!
-            elif message[2] == "RemoteStartTransaction":
-                await asyncio.gather(self.remote_start_transaction(message))
-            elif message[2] == "RemoteStopTransaction":
-                await asyncio.gather(self.remote_stop_transaction(message))
-            elif message[2] == "DataTransfer":
-                await asyncio.gather(self.recive_data_transfer(message))
-            elif message[2] == "StartTransaction":
-                self.transactionId = message[3]["transactionId"]    #Store transaction id from server
-        except:
-            pass
+                if message[2] == "ReserveNow":
+                    await asyncio.gather(self.reserve_now(message))
+                elif message[2] == "BootNotification":
+                    self.status = "Available"
+                    await asyncio.gather(self.send_status_notification(None)) #Status notification should be sent after a boot
+                    #Should change state here!
+                elif message[2] == "RemoteStartTransaction":
+                    await asyncio.gather(self.remote_start_transaction(message))
+                elif message[2] == "RemoteStopTransaction":
+                    await asyncio.gather(self.remote_stop_transaction(message))
+                elif message[2] == "DataTransfer":
+                    await asyncio.gather(self.recive_data_transfer(message))
+                elif message[2] == "StartTransaction":
+                    self.transaction_id = message[3]["transactionId"]    #Store transaction id from server
+            except:
+                pass
 
     #AuthorizeRemoteTxRequests is always false since no authorize function exists in backend(?)
     #TODO - Change when multiple connectors exists. Add parent id tag.
@@ -137,14 +141,14 @@ class ChargePoint():
             asyncio.run(self.send_status_notification(None)) #Notify back-end that we are availiable again
             return
         self.reserve_now_timer = self.reserve_now_timer - 1
-        print(self.reserve_now_timer)
         threading.Timer(1, self.timer_countdown_reservation).start()    #Countdown every second
 ##########################################################################################################################
     def meter_counter_charging(self):
         if self.is_charging == True:
             self.meter_value_total = self.meter_value_total + 1
-            print(self.meter_value_total)
-            threading.Timer(1, self.meter_counter_charging).start()
+            self.current_charging_percentage = self.current_charging_percentage + 1
+            asyncio.run(self.send_data_transfer(1, self.current_charging_percentage))
+            threading.Timer(3, self.meter_counter_charging).start()
         else:
             print("{}{}".format("Total charge: ", self.meter_value_total))
 
@@ -382,12 +386,14 @@ class ChargePoint():
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-
+###########################################################################################################
     async def send_data_transfer(self, message_id, message_data):
+        s:str = "{}{}{}{}{}{}{}".format("{\"transactionId\":", self.transaction_id, ",\"latestMeterValue\":", message_data, ",\"CurrentChargePercentage\":", message_data, "}")
+        print(s)
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "DataTransfer",{
-                "vendorId" : self.hardcoded_vendor_id,
-                "messageId" : message_id,
-                "data" : message_data
+                #"vendorId" : self.hardcoded_vendor_id,
+                "messageId" : "ChargeLevelUpdate",
+                "data" : s
         }]
 
         msg_send = json.dumps(msg)
@@ -443,11 +449,12 @@ async def user_input_task(cp):
             await asyncio.gather(cp.send_heartbeat())
             print("Heartbeat")
         """
+        #if cp.is_charging == True:
+            #await asyncio.gather(cp.send_data_transfer(1, cp.current_charging_percentage))
 
         a = int(input(">> "))
         if a == 1:
-            print("Testing boot notification")
-            await asyncio.gather(cp.send_data_transfer("ChargeLevelUpdate","{\"transactionId\":32\"latestMeterValue\":1,\"CurrentChargePercentage\":1}"))
+            await asyncio.gather(cp.send_data_transfer(1, 2))
         elif a == 2:
             print("Testing status notification")
             await asyncio.gather(cp.send_status_notification())
