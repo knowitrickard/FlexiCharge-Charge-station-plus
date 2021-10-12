@@ -2,6 +2,7 @@
 
 import asyncio
 from asyncio.events import get_event_loop
+from asyncio.tasks import gather
 import threading
 import websockets
 from datetime import datetime
@@ -63,7 +64,9 @@ class ChargePoint():
             if message[2] == "ReserveNow":
                 await asyncio.gather(self.reserve_now(message))
             elif message[2] == "BootNotification":
-                return #Should change state here!
+                self.status = "Available"
+                await asyncio.gather(self.send_status_notification(None)) #Status notification should be sent after a boot
+                #Should change state here!
             elif message[2] == "RemoteStartTransaction":
                 await asyncio.gather(self.remote_start_transaction(message))
             elif message[2] == "RemoteStopTransaction":
@@ -131,6 +134,8 @@ class ChargePoint():
         if self.reserve_now_timer <= 0:
             print("Reservation is canceled!")
             self.hard_reset_reservation()
+            self.status = "Available"
+            asyncio.run(self.send_status_notification(None)) #Notify back-end that we are availiable again
             return
         self.reserve_now_timer = self.reserve_now_timer - 1
         print(self.reserve_now_timer)
@@ -148,7 +153,6 @@ class ChargePoint():
         self.charging_connector = None
         self.is_charging = False
         print("Hard reset charging")
-
 
     async def reserve_now(self, message):
         if self.reservation_id == None or self.reservation_id == message[3]["reservationID"]:
@@ -198,8 +202,6 @@ class ChargePoint():
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
 
-
-
     #Tells server we have started a transaction (charging)
     async  def start_transaction(self, is_remote):
         current_time = datetime.now()
@@ -233,11 +235,6 @@ class ChargePoint():
             msg = [3, [1],  ]
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
-
-        
-
-
-
 
     #TODO - Adjust to multiple connectors when added. Assumes a single connector
     async def stop_transaction(self, is_remote):
@@ -281,16 +278,6 @@ class ChargePoint():
         response = await self.my_websocket.recv()
         print(json.loads(response))
 
-
-
-
-
-
-
-
-
-
-
     async def send_boot_notification(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "BootNotification", {
             "chargePointVendor": "AVT-Company",
@@ -306,7 +293,7 @@ class ChargePoint():
         await self.my_websocket.send(msg_send)
 
     #Gets no response, is this an error in back-end? Seems to be the case
-    async def send_status_notification(self):
+    async def send_status_notification(self, info):
         current_time = datetime.now()
         timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
         formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ") #Can be removed if back-end does not want the time-stamp formated
@@ -314,20 +301,20 @@ class ChargePoint():
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StatusNotification",{
             "connectorId" : self.hardcoded_connector_id,
             "errorCode" : self.error_code,
-            "info" : "None", #Optional according to official OCPP-documentation
+            "info" : info, #Optional according to official OCPP-documentation
             "status" : self.status,
-            "timestamp" : formated_timestamp, #Optional according to official OCPP-documentation
+            "timestamp" : timestamp, #Optional according to official OCPP-documentation
             "vendorId" : self.hardcoded_vendor_id, #Optional according to official OCPP-documentation
             "vendorErrorCode" : "None" #Optional according to official OCPP-documentation
             }]
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        print("Status notification sent")
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
+        print("Status notification sent with message: ")
+        print(msg)
+        self.timestamp_at_last_status_notification = time.perf_counter()
 
-    #Not tested yet, back-end has no implementation for heartbeat at the moment
+    #Depricated in back-end
     async def send_heartbeat(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "Heartbeat", {}]
         msg_send = json.dumps(msg)
@@ -343,6 +330,7 @@ class ChargePoint():
         else:
             return False
 
+    #Depricated in back-end
     async def send_meter_values(self):
         current_time = datetime.now()
         timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
@@ -376,9 +364,6 @@ class ChargePoint():
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
-        await asyncio.sleep(1)
 
     async def send_data_transfer(self, message_id, message_data):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "DataTransfer",{
@@ -404,7 +389,6 @@ class ChargePoint():
             status = "UnknownVenorId"
 
         #Send a conf
-        """
         conf_msg = [3, 
                     message[1],
                     "DataTransfer", 
@@ -413,12 +397,6 @@ class ChargePoint():
         conf_send = json.dumps(conf_msg)
         print("Sending confirmation: " + conf_send)
         await self.my_websocket.send(conf_send)
-        """
-
-
-
-
-
 
 
     async def send_data_reserve(self):
@@ -436,25 +414,17 @@ class ChargePoint():
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
 
-
-
-
-
-
-
-
-
-
-
 async def user_input_task(cp):
     while 1:
         msg = await asyncio.gather(cp.get_message())    #Check if there is any incoming message pending
 
         """
         #Maybe not the best solution to generate a periodic heartbeat but using Threads togheter with websocket results in big problems. Time is not enough to solve that now.
+        #Depricated in back-end
         if await cp.check_if_time_for_heartbeat():
             await asyncio.gather(cp.send_heartbeat())
             print("Heartbeat")
+        """
 
         a = int(input(">> "))
         if a == 1:
@@ -468,7 +438,7 @@ async def user_input_task(cp):
             await asyncio.gather(cp.send_heartbeat())
         elif a == 4:
             print("Testing status notification")
-            await asyncio.gather(cp.send_status_notification())
+            await asyncio.gather(cp.send_status_notification(None))
         elif a == 5:
             print("Testing reserve now")
             await asyncio.gather(cp.send_data_reserve())
@@ -489,7 +459,6 @@ async def user_input_task(cp):
             await asyncio.gather(cp.start_transaction())
         elif a == 0:
             await asyncio.sleep(0.1)
-        """
 
 async def main():
     async with websockets.connect(
