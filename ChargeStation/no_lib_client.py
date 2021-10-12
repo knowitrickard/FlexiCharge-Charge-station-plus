@@ -2,6 +2,7 @@
 
 import asyncio
 from asyncio.events import get_event_loop
+from asyncio.tasks import gather
 import threading
 import websockets
 from datetime import datetime
@@ -13,6 +14,8 @@ from threading import Thread
 class ChargePoint():
     my_websocket = None
     my_id = ""
+
+    meter_value_total = 0   #Send this to server at start and stop. It will calculate cost. Incremented during charging.
 
     #Reservation related variables
     reserve_now_timer = 0
@@ -26,18 +29,17 @@ class ChargePoint():
     is_charging = False
     charging_id_tag = None
     charging_connector = None
-    charging_transaction_id = None
     charging_Wh = 0 #I think this is how many Wh have been used to charge
+    transaction_id = None
 
     #Define enums for status and error_code (or use the onses in OCPP library)
     status = "Available"
     error_code = "NoError"
 
     hardcoded_connector_id = 1
-    hardcoded_vendor_id = "Flexicharge"
-    hardcoded_id_tag = 1
+    hardcoded_vendor_id = "com.flexicharge"
 
-    transaction_id = 123
+    hardcoded_id_tag = 1
 
     charger_id = 00000
 
@@ -60,12 +62,17 @@ class ChargePoint():
             if message[2] == "ReserveNow":
                 await asyncio.gather(self.reserve_now(message))
             elif message[2] == "BootNotification":
-                self.charger_id = message[3]["chargerId"] #This is the id number we get from the server (100001)
-                print(self.charger_id)
+                self.status = "Available"
+                await asyncio.gather(self.send_status_notification(None)) #Status notification should be sent after a boot
+                #Should change state here!
             elif message[2] == "RemoteStartTransaction":
                 await asyncio.gather(self.remote_start_transaction(message))
             elif message[2] == "RemoteStopTransaction":
                 await asyncio.gather(self.remote_stop_transaction(message))
+            elif message[2] == "DataTransfer":
+                await asyncio.gather(self.recive_data_transfer(message))
+            elif message[2] == "StartTransaction":
+                self.transactionId = message[3]["transactionId"]    #Store transaction id from server
         except:
             pass
 
@@ -75,11 +82,8 @@ class ChargePoint():
     #       No status_notification is sent since it does not get a response and locks the program
     async def remote_start_transaction(self, message):
         if int(message[3]["idTag"]) == self.reservation_id_tag: #If the idTag has a reservation
-            self.is_charging = True
+            self.start_charging_from_reservation()
             print("Remote transaction started")
-            self.charging_id_tag = self.reservation_id_tag
-            self.charging_connector = self.reserved_connector
-            self.hard_reset_reservation()
 
             msg = [3, 
                 message[1], #Unique message id
@@ -88,8 +92,9 @@ class ChargePoint():
             ]
             response = json.dumps(msg)
             await self.my_websocket.send(response)
-            await self.start_transaction()
-            await self.send_status_notification()   #Notify central system that connector is now available
+
+            await self.start_transaction(is_remote=True)
+            await self.send_status_notification(None)   #Notify central system that connector is now available
             print("Charge should be started")
         else:   #A non reserved tag tries to use the connector
             print("This tag does not have a reservation")
@@ -102,7 +107,8 @@ class ChargePoint():
             await self.my_websocket.send(response)
 
     async def remote_stop_transaction(self, message):
-        if self.is_charging == True and int(message[3]["transactionID"]) == int(self.charging_transaction_id):
+        #message[3]["transactionID"]
+        if self.is_charging == True:# and message[3]["transactionId"] == self.transaction_id:
             print("Remote stop charging")
             msg = [3, 
                 message[1], #Have to use the unique message id received from server
@@ -127,24 +133,46 @@ class ChargePoint():
         if self.reserve_now_timer <= 0:
             print("Reservation is canceled!")
             self.hard_reset_reservation()
+            self.status = "Available"
+            asyncio.run(self.send_status_notification(None)) #Notify back-end that we are availiable again
             return
         self.reserve_now_timer = self.reserve_now_timer - 1
         print(self.reserve_now_timer)
         threading.Timer(1, self.timer_countdown_reservation).start()    #Countdown every second
+##########################################################################################################################
+    def meter_counter_charging(self):
+        if self.is_charging == True:
+            self.meter_value_total = self.meter_value_total + 1
+            print(self.meter_value_total)
+            threading.Timer(1, self.meter_counter_charging).start()
+        else:
+            print("{}{}".format("Total charge: ", self.meter_value_total))
+
     
     def hard_reset_reservation(self):
         self.is_reserved = False
         self.reserve_now_timer = 0
         self.reservation_id_tag = None
         self.reservation_id = None
+        print("Hard reset reservation")
 
     def hard_reset_charging(self):
         self.is_charging = False
         self.charging_id_tag = None
         self.charging_connector = None
-        self.is_charging = False
         print("Hard reset charging")
+    
+    def start_charging_from_reservation(self):
+        self.is_charging = True
+        self.charging_id_tag = self.reservation_id_tag
+        self.charging_connector = self.reserved_connector
+        threading.Timer(1, self.meter_counter_charging).start()
 
+    def start_charging(self, connector_id, id_tag):
+        self.is_charging = True
+        self.charging_id_tag = id_tag
+        self.charging_connector = connector_id
+        threading.Timer(1, self.meter_counter_charging).start()
 
     async def reserve_now(self, message):
         if self.reservation_id == None or self.reservation_id == message[3]["reservationID"]:
@@ -193,32 +221,38 @@ class ChargePoint():
             ]
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
-
-
-
+###################################################################################################################
     #Tells server we have started a transaction (charging)
-    async  def start_transaction(self):
+    async def start_transaction(self, is_remote):
         current_time = datetime.now()
         timestamp = current_time.timestamp()
-        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
-            "connectorId" : 2,
-            "id_tag": 123456 ,
-            "meterStart":1,
-            "timestamp" : formated_timestamp,
-            "reservationId": 1,
 
-
-
-        }]
+        if is_remote == True:
+            #If remote then charging have started in remote_start_transaction. Notify server here.
+            msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
+            "connectorId" : self.charging_connector,
+            "id_tag": self.charging_id_tag,
+            "meterStart":self.meter_value_total,
+            "timestamp" : timestamp,
+            "reservationId": self.reservation_id,
+             }]
         
-        msg_send = json.dumps(msg)
-        await self.my_websocket.send(msg_send)
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
+            self.hard_reset_reservation()
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+        else:   #No reservation
+            self.start_charging(self.hardcoded_connector_id, self.hardcoded_id_tag)
 
+            msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
+            "connectorId" : self.charging_connector,
+            "id_tag": self.charging_id_tag ,
+            "meterStart":self.meter_value_total,
+            "timestamp" : timestamp,
+            "reservationId": None,  #If here, no reservation was made
+             }]
 
-
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
 
     #TODO - Adjust to multiple connectors when added. Assumes a single connector
     async def stop_transaction(self, is_remote):
@@ -227,9 +261,9 @@ class ChargePoint():
         if is_remote == True:
             msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction", {
                 "idTag": self.charging_id_tag,
-                "meterStop": self.charging_Wh,
+                "meterStop": self.meter_value_total,
                 "timestamp": timestamp,
-                "transactionId": self.charging_transaction_id,
+                "transactionId": self.transaction_id,
                 "reason": "Remote",
                 "transactionData": None#[
                     #{
@@ -244,9 +278,9 @@ class ChargePoint():
         else:
             msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StopTransaction", {
                 "idTag": self.charging_id_tag,
-                "meterStop": self.charging_Wh,
+                "meterStop": self.meter_value_total,
                 "timestamp": timestamp,
-                "transactionId": self.charging_transaction_id,
+                "transactionId": self.transaction_id,
                 "reason": "Remote",
                 "transactionData": None#[
                     #{
@@ -261,16 +295,6 @@ class ChargePoint():
 
         response = await self.my_websocket.recv()
         print(json.loads(response))
-
-
-
-
-
-
-
-
-
-
 
     async def send_boot_notification(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "BootNotification", {
@@ -287,7 +311,7 @@ class ChargePoint():
         await self.my_websocket.send(msg_send)
 
     #Gets no response, is this an error in back-end? Seems to be the case
-    async def send_status_notification(self):
+    async def send_status_notification(self, info):
         current_time = datetime.now()
         timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
         formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ") #Can be removed if back-end does not want the time-stamp formated
@@ -295,20 +319,20 @@ class ChargePoint():
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StatusNotification",{
             "connectorId" : self.hardcoded_connector_id,
             "errorCode" : self.error_code,
-            "info" : "None", #Optional according to official OCPP-documentation
+            "info" : info, #Optional according to official OCPP-documentation
             "status" : self.status,
-            "timestamp" : formated_timestamp, #Optional according to official OCPP-documentation
+            "timestamp" : timestamp, #Optional according to official OCPP-documentation
             "vendorId" : self.hardcoded_vendor_id, #Optional according to official OCPP-documentation
             "vendorErrorCode" : "None" #Optional according to official OCPP-documentation
             }]
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        print("Status notification sent")
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
+        print("Status notification sent with message: ")
+        print(msg)
+        self.timestamp_at_last_status_notification = time.perf_counter()
 
-    #Not tested yet, back-end has no implementation for heartbeat at the moment
+    #Depricated in back-end
     async def send_heartbeat(self):
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "Heartbeat", {}]
         msg_send = json.dumps(msg)
@@ -324,6 +348,7 @@ class ChargePoint():
         else:
             return False
 
+    #Depricated in back-end
     async def send_meter_values(self):
         current_time = datetime.now()
         timestamp = current_time.timestamp() #Can be removed if back-end does want the time-stamp formated
@@ -357,18 +382,39 @@ class ChargePoint():
 
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
-        await asyncio.sleep(1)
 
+    async def send_data_transfer(self, message_id, message_data):
+        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "DataTransfer",{
+                "vendorId" : self.hardcoded_vendor_id,
+                "messageId" : message_id,
+                "data" : message_data
+        }]
 
+        msg_send = json.dumps(msg)
+        await self.my_websocket.send(msg_send)
 
+    async def recive_data_transfer(self, message):
+        status = "Rejected"
+        if message[3]["vendorId"] == self.hardcoded_vendor_id:
+            if message[3]["messageId"] == "BootData":
+                parsed_data = json.loads(message[3]["data"])
+                self.charger_id = parsed_data["chargerId"]
+                print("Charger ID is set to: " + str(self.charger_id))
+                status = "Accepted"
+            else:
+                status = "UnknownMessageId"
+        else:
+            status = "UnknownVenorId"
 
+        #Send a conf
+        conf_msg = [3, 
+                    message[1],
+                    "DataTransfer", 
+                    {"status": status}]
 
-
-
-
-
+        conf_send = json.dumps(conf_msg)
+        print("Sending confirmation: " + conf_send)
+        await self.my_websocket.send(conf_send)
 
 
     async def send_data_reserve(self):
@@ -386,29 +432,22 @@ class ChargePoint():
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
 
-
-
-
-
-
-
-
-
-
-
 async def user_input_task(cp):
     while 1:
         msg = await asyncio.gather(cp.get_message())    #Check if there is any incoming message pending
 
+        """
         #Maybe not the best solution to generate a periodic heartbeat but using Threads togheter with websocket results in big problems. Time is not enough to solve that now.
+        #Depricated in back-end
         if await cp.check_if_time_for_heartbeat():
             await asyncio.gather(cp.send_heartbeat())
             print("Heartbeat")
+        """
 
         a = int(input(">> "))
         if a == 1:
             print("Testing boot notification")
-            await asyncio.gather(cp.send_boot_notification())
+            await asyncio.gather(cp.send_data_transfer("ChargeLevelUpdate","{\"transactionId\":32\"latestMeterValue\":1,\"CurrentChargePercentage\":1}"))
         elif a == 2:
             print("Testing status notification")
             await asyncio.gather(cp.send_status_notification())
@@ -417,7 +456,7 @@ async def user_input_task(cp):
             await asyncio.gather(cp.send_heartbeat())
         elif a == 4:
             print("Testing status notification")
-            await asyncio.gather(cp.send_status_notification())
+            await asyncio.gather(cp.send_status_notification(None))
         elif a == 5:
             print("Testing reserve now")
             await asyncio.gather(cp.send_data_reserve())
@@ -435,7 +474,7 @@ async def user_input_task(cp):
             cp.hard_reset_reservation()
         elif a == 10:
             print("Testing start transaction")
-            await asyncio.gather(cp.start_transaction())
+            await asyncio.gather(cp.start_transaction(is_remote = False))
         elif a == 0:
             await asyncio.sleep(0.1)
 
