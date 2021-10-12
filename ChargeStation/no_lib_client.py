@@ -92,7 +92,7 @@ class ChargePoint():
             ]
             response = json.dumps(msg)
             await self.my_websocket.send(response)
-
+            await self.start_transaction(is_remote=True)
             await self.send_status_notification()   #Notify central system that connector is now available
 
         else:   #A non reserved tag tries to use the connector
@@ -201,25 +201,40 @@ class ChargePoint():
 
 
     #Tells server we have started a transaction (charging)
-    async  def start_transaction(self):
+    async  def start_transaction(self, is_remote):
         current_time = datetime.now()
         timestamp = current_time.timestamp()
-        formated_timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-        msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
+        if is_remote == True:
+            msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
             "connectorId" : 2,
             "id_tag": 123456 ,
             "meterStart":1,
-            "timestamp" : formated_timestamp,
+            "timestamp" : timestamp,
             "reservationId": 1,
-
-
-
-        }]
+             }]
         
-        msg_send = json.dumps(msg)
-        await self.my_websocket.send(msg_send)
-        response = await self.my_websocket.recv()
-        print(json.loads(response))
+       
+            self.transaction_id =  [3]["TrasacationID"]
+            print("Transaction started")
+            msg = [3, [1],  ]
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+        else:
+            msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "StartTransaction", {
+            "connectorId" : 2,
+            "id_tag": 123456 ,
+            "meterStart":1,
+            "timestamp" : timestamp,
+            "reservationId": 1,
+             }]
+
+            self.transaction_id =  [3]["TrasacationID"]
+            print("Transaction started")
+            msg = [3, [1],  ]
+            msg_send = json.dumps(msg)
+            await self.my_websocket.send(msg_send)
+
+        
 
 
 
