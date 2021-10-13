@@ -112,8 +112,8 @@ class ChargePoint():
             await self.my_websocket.send(response)
 
     async def remote_stop_transaction(self, message):
-        #message[3]["transactionID"]
-        if self.is_charging == True:# and message[3]["transactionId"] == self.transaction_id:
+        local_transaction_id = message[3]["transactionID"]
+        if self.is_charging == True and int(local_transaction_id) == int(self.transaction_id):
             print("Remote stop charging")
             msg = [3, 
                 message[1], #Have to use the unique message id received from server
@@ -188,8 +188,10 @@ class ChargePoint():
         threading.Timer(1, self.meter_counter_charging).start()
 
     async def reserve_now(self, message):
-        if self.reservation_id == None or self.reservation_id == message[3]["reservationID"]:
-            if self.ReserveConnectorZeroSupported == False and message[3]["connectorID"] == 0:
+        local_reservation_id = message[3]["reservationID"]
+        local_connector_id = message[3]["connectorID"]
+        if self.reservation_id == None or self.reservation_id == local_reservation_id:
+            if self.ReserveConnectorZeroSupported == False and local_connector_id == 0:
                 print("Connector zero not allowed")
                 msg = [3, 
                     message[1], #Have to use the unique message id received from server
@@ -218,7 +220,7 @@ class ChargePoint():
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
 
-        elif self.reserved_connector == message[3]["connectorID"]:
+        elif self.reserved_connector == local_connector_id:
             print("Connector occupied")
             msg = [3, 
                 message[1], #Have to use the unique message id received from server
@@ -490,7 +492,7 @@ async def test_sequence(cp:ChargePoint):
 
 async def user_input_task(cp):
 
-    await asyncio.gather(test_sequence(cp))
+    #await asyncio.gather(test_sequence(cp))
 
     while 1:
         msg = await asyncio.gather(cp.get_message())    #Check if there is any incoming message pending
