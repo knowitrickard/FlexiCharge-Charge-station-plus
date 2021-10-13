@@ -98,6 +98,7 @@ class ChargePoint():
             await self.my_websocket.send(response)
 
             await self.start_transaction(is_remote=True)
+            self.status = "Charging"
             await self.send_status_notification(None)   #Notify central system that connector is now available
             print("Charge should be started")
         else:   #A non reserved tag tries to use the connector
@@ -141,7 +142,9 @@ class ChargePoint():
             asyncio.run(self.send_status_notification(None)) #Notify back-end that we are availiable again
             return
         self.reserve_now_timer = self.reserve_now_timer - 1
-        threading.Timer(1, self.timer_countdown_reservation).start()    #Countdown every second
+        #Should only countdown if status us Reserved, otherwise won't be able to start charging
+        if self.status == "Reserved":
+            threading.Timer(1, self.timer_countdown_reservation).start()    #Countdown every second
 ##########################################################################################################################
     def meter_counter_charging(self):
         if self.is_charging == True:
@@ -171,6 +174,12 @@ class ChargePoint():
         self.charging_id_tag = self.reservation_id_tag
         self.charging_connector = self.reserved_connector
         threading.Timer(1, self.meter_counter_charging).start()
+        threading.Timer(2, self.send_periodic_meter_values).start()
+
+    def send_periodic_meter_values(self):
+        asyncio.run(self.send_data_transfer(1, self.current_charging_percentage))
+        if self.is_charging:
+            threading.Timer(2, self.send_periodic_meter_values).start()
 
     def start_charging(self, connector_id, id_tag):
         self.is_charging = True
@@ -192,13 +201,14 @@ class ChargePoint():
                 return
             self.hard_reset_reservation()
             self.is_reserved = True
-            self.reservation_id_tag = message[3]["idTag"]
+            self.status = "Reserved"
+            self.reservation_id_tag = int(message[3]["idTag"])
             self.reservation_id = message[3]["reservationID"]
             self.reserved_connector = message[3]["connectorID"]
             timestamp = message[3]["expiryDate"]   #Given in ms since epoch
             reserved_for_ms = int(timestamp - (int(time.time()*1000)))
             self.reserve_now_timer = int(10)#reserved_for_ms/1000)   #Reservation time in seconds
-            threading.Timer(1, self.timer_countdown_reservation).start()    #Countdown every second
+            self.timer_countdown_reservation  #Countdown every second
 
             msg = [3, 
                 message[1], #Have to use the unique message id received from server
@@ -207,6 +217,7 @@ class ChargePoint():
             ]
             msg_send = json.dumps(msg)
             await self.my_websocket.send(msg_send)
+
         elif self.reserved_connector == message[3]["connectorID"]:
             print("Connector occupied")
             msg = [3, 
@@ -390,6 +401,7 @@ class ChargePoint():
     async def send_data_transfer(self, message_id, message_data):
         s:str = "{}{}{}{}{}{}{}".format("{\"transactionId\":", self.transaction_id, ",\"latestMeterValue\":", message_data, ",\"CurrentChargePercentage\":", message_data, "}")
         print(s)
+
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "DataTransfer",{
                 #"vendorId" : self.hardcoded_vendor_id,
                 "messageId" : "ChargeLevelUpdate",
@@ -422,7 +434,6 @@ class ChargePoint():
         print("Sending confirmation: " + conf_send)
         await self.my_websocket.send(conf_send)
 
-
     async def send_data_reserve(self):
         msg = ["chargerplus", "ReserveNow"]
         msg_send = json.dumps(msg)
@@ -438,7 +449,49 @@ class ChargePoint():
         msg_send = json.dumps(msg)
         await self.my_websocket.send(msg_send)
 
+async def test_sequence(cp:ChargePoint):
+    await asyncio.gather(cp.get_message())
+    if cp.charger_id == 000000:
+        print("Error: ChargerId was not updated after BootNotification")
+        return
+
+    if cp.status != "Available":
+        print("Error: Charger was not set to Availiable after BootNotification")
+        return
+
+    input("Do a ReservNow and then press enter!")
+    await asyncio.gather(cp.get_message())
+    if cp.status != "Reserved":
+        print("Error: Charger was not set to Reserved after ReservNow")
+        return
+
+    await asyncio.gather(cp.send_data_remote_start())
+    for x in range(10) :
+        await asyncio.gather(cp.get_message())
+        if cp.status == "Charging":
+            break
+        await asyncio.sleep(1)
+    if cp.status != "Charging":
+        print("Error: Charger was not set to Charging after RemoteStart")
+        return
+
+    while cp.is_charging:
+        if cp.status != "Charging":
+            print("Error: Charger was not set to Charging during the charging process")
+            return
+        if cp.current_charging_percentage >= 10:
+            print("Testing to stop transaction at " + str(cp.current_charging_percentage) + "%")
+            await asyncio.gather(cp.stop_transaction(False))
+            if cp.status != "Available":
+                print("Error: Charger was not set to Availiable after StopTransaction")
+        continue
+    
+    print("Test Passed!")
+
 async def user_input_task(cp):
+
+    await asyncio.gather(test_sequence(cp))
+
     while 1:
         msg = await asyncio.gather(cp.get_message())    #Check if there is any incoming message pending
 
@@ -457,7 +510,7 @@ async def user_input_task(cp):
             await asyncio.gather(cp.send_data_transfer(1, 2))
         elif a == 2:
             print("Testing status notification")
-            await asyncio.gather(cp.send_status_notification())
+            await asyncio.gather(cp.send_status_notification(None))
         elif a == 3:
             print("Testing status notification")
             await asyncio.gather(cp.send_heartbeat())
