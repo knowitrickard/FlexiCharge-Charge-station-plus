@@ -399,7 +399,7 @@ class ChargePoint():
         await self.my_websocket.send(msg_send)
 ###########################################################################################################
     async def send_data_transfer(self, message_id, message_data):
-        s:str = "{}{}{}{}{}{}{}".format("{\"transactionId\":", self.transaction_id, ",\"latestMeterValue\":", message_data, ",\"CurrentChargePercentage\":", message_data, "}")
+        s:str = "{}{}{}{}{}{}{}".format("{\"transactionId\":", self.transaction_id, ",\"latestMeterValue\":", self.meter_value_total, ",\"CurrentChargePercentage\":", message_data, "}")
         print(s)
 
         msg = [2, "0jdsEnnyo2kpCP8FLfHlNpbvQXosR5ZNlh8v", "DataTransfer",{
