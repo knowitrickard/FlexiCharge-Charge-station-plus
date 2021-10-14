@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from ocpp.routing import on, after
 from ocpp.v16 import ChargePoint as cp
-from ocpp.v16.enums import Action, RegistrationStatus, AuthorizationStatus, DataTransferStatus, ChargePointStatus
+from ocpp.v16.enums import Action, ClearCacheStatus, RegistrationStatus, AuthorizationStatus, DataTransferStatus, ChargePointStatus
 from ocpp.v16 import call_result, call
 
 class ChargePoint(cp):
@@ -14,13 +14,15 @@ class ChargePoint(cp):
         self.status = ChargePointStatus.available
         self.transaction_id = None
 
-    #triggerd by http server remotely
     async def remote_start_transaction(self, id_tag:str):
         """
         Tell chargepoint to start a transaction with the given id_tag.
         """
+        
+        print("Remote start transaction")
         payload = call.RemoteStartTransactionPayload(id_tag = id_tag )
-        await self.call(payload)
+        response = await self.call(payload)
+        print(response)
 
     @on(Action.Authorize)
     def on_authorize(self, id_tag:str, **kwargs):
@@ -28,8 +30,9 @@ class ChargePoint(cp):
         Verifies a tag and responds with a status
         """
         print("On authorize")
+
         tag_info =  {
-            "status": AuthorizationStatus.accepted
+           "status": AuthorizationStatus.accepted
         }
         print(f"Charger {self.id}: Authorized with {id_tag}")
 
